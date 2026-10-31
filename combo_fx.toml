@@ -1,0 +1,6 @@
+[[sonic]]
+vfx_type = "sonic_colors"
+sfx_type = "sonic_colors"
+combo_frame = 90
+cooldown_frame = 16
+combo_hits = [2, 3, 4, 5, 6]

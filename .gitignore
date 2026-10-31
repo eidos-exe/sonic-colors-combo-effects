@@ -1,0 +1,8 @@
+/target/
+*.nro
+*.nsp
+*.xci
+*.iso
+*.rvz
+*.zip
+.env
