@@ -1,7 +1,7 @@
 [package]
-name = "ml_combo_fx"
-version = "0.1.0"
-authors = ["LilyLambda"]
+name = "sonic_colors_combo_effects"
+version = "1.0.1"
+authors = ["eidos.exe", "LilyLambda (original combo system)"]
 edition = "2018"
 
 [package.metadata.skyline]

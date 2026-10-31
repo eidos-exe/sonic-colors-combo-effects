@@ -25,15 +25,10 @@ use {
     smashline::{*, Priority::*}
 };
 
-pub static DEFAULT_EFFECT_TYPE: &str = "";
-pub static DEFAULT_COMBO_FRAME: i32 = -1;
-pub static DEFAULT_COOLDOWN_FRAME: i32 = 16;
-pub static DEFAULT_COMBO_HITS: [i32; 4] = [2, 3, 4, 5];
-
 mod frame;
 mod data;
 
-#[skyline::main(name = "ml_combo_fx")]
+#[skyline::main(name = "sonic_colors_combo_effects")]
 pub fn main() {
     frame::install();
 }

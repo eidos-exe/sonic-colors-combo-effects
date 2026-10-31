@@ -1,7 +1,5 @@
 use super::*;
-use skyline::nn::ro::LookupSymbol;
 use skyline::hooks::{Region,getRegionAddress};
-use skyline::libc::*;
 use std::collections::HashMap;
 use std::sync::RwLock;
 use crate::data::*;
@@ -110,15 +108,13 @@ const FIGHTER_INSTANCE_WORK_ID_INT_COMBO_COUNTER : i32 = 0x1000010C;
 
 unsafe extern "C" fn combo_fighter_frame(fighter: &mut L2CFighterCommon) {
     let boma = fighter.module_accessor;
-    if utility::get_kind(&mut *boma) != *FIGHTER_KIND_PEACH
-        && utility::get_kind(&mut *boma) != *FIGHTER_KIND_SONIC
-        && (utility::get_kind(&mut *boma) != *FIGHTER_KIND_KOOPA
-            || WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_COLOR) != 0) {
-        return;
-    }
+    let kind = utility::get_kind(&mut *boma);
+    let settings = match EFFECT_CONFIG.read().expect("Failed to read config").get(&kind) {
+        Some(settings) => settings.clone(),
+        None => return,
+    };
     let status_kind = StatusModule::status_kind(boma);
     let status_frame = fighter.global_table[0xe].get_f32();
-    // let motion_kind = MotionModule::motion_kind(boma);
     let combo_timer = WorkModule::get_int(boma, FIGHTER_INSTANCE_WORK_ID_INT_COMBO_TIMER);
     
     // Decrease combo timer every frame
@@ -145,10 +141,8 @@ unsafe extern "C" fn combo_fighter_frame(fighter: &mut L2CFighterCommon) {
     }
     
     // Reset effect spawned flag after a few frames
-    let kind = utility::get_kind(&mut *boma);
-    let config = EFFECT_CONFIG.read().expect("Failed to read config");
-    let max_combo_frame = config.get(&kind).map_or(75, |cfg| cfg.combo_frame);
-    let cooldown_frames = config.get(&kind).map_or(16, |cfg| cfg.cooldown_frame);
+    let max_combo_frame = settings.combo_frame;
+    let cooldown_frames = settings.cooldown_frame;
     if combo_timer + cooldown_frames <= max_combo_frame {
         WorkModule::off_flag(boma, FIGHTER_INSTANCE_WORK_ID_FLAG_COMBO_EFFECT_SPAWNED);
     }
@@ -182,34 +176,17 @@ pub unsafe fn notify_log_event_collision_hit_replace(fighter_manager: *mut smash
         return og;
     }
     let owner_boma = if attacker_is_fighter {
-        // Attacker is a fighter
-        // attacker_boma = fighter's boma
-        // owner_boma = fighter's boma
         attacker_boma
     } else {
-        // Attacker is a projectile
-        // attacker_boma = projectile's boma
-        // owner_boma = fighter's boma
         sv_battle_object::module_accessor((WorkModule::get_int(attacker_boma, *WEAPON_INSTANCE_WORK_ID_INT_LINK_OWNER)) as u32)
     };
 
     // Make sure character is allowed to have effects
     let attacker_kind = utility::get_kind(&mut *owner_boma);
-    // This build is restricted to Peach, including her projectiles.
-    if attacker_kind != *FIGHTER_KIND_PEACH
-        && attacker_kind != *FIGHTER_KIND_SONIC
-        && (attacker_kind != *FIGHTER_KIND_KOOPA
-            || WorkModule::get_int(owner_boma, *FIGHTER_INSTANCE_WORK_ID_INT_COLOR) != 0) {
-        return og;
-    }
-    let config = EFFECT_CONFIG.read();
-    if let Some(active_fighter) = config.as_ref().expect("Failed to acquire read lock").get(&attacker_kind) {
-        if active_fighter.vfx_type == "" && active_fighter.sfx_type == "" {
-            return og;
-        }
-    } else {
-        return og;
-    }
+    let settings = match EFFECT_CONFIG.read().expect("Failed to read config").get(&attacker_kind) {
+        Some(settings) => settings.clone(),
+        None => return og,
+    };
 
     // Clear counter when getting hit
     WorkModule::set_int(defender_boma, 0, FIGHTER_INSTANCE_WORK_ID_INT_COMBO_COUNTER);
@@ -222,76 +199,19 @@ pub unsafe fn notify_log_event_collision_hit_replace(fighter_manager: *mut smash
     && damage > 1.0 {
         WorkModule::on_flag(owner_boma, FIGHTER_INSTANCE_WORK_ID_FLAG_COMBO_EFFECT_SPAWNED);
         WorkModule::inc_int(owner_boma, FIGHTER_INSTANCE_WORK_ID_INT_COMBO_COUNTER);
-        let config_guard = EFFECT_CONFIG.read().expect("Failed to read config");
-        let combo_frame = config_guard.get(&attacker_kind).map_or(0, |cfg| cfg.combo_frame);
-        WorkModule::set_int(owner_boma, combo_frame, FIGHTER_INSTANCE_WORK_ID_INT_COMBO_TIMER);
-        
-        let vfx_type = config_guard.get(&attacker_kind).map(|cfg| cfg.vfx_type.clone()).unwrap_or_else(|| "".to_string());
-        let vfx_type_short = match vfx_type.as_str() {
-            "inside_story" => "bis",
-            "color_splash" => "cs",
-            "dream_team" => "dt",
-            "superstar_saga" => "ssbm",
-            "brothership" => "bro",
-            _ => vfx_type.as_str(),
-        };
-
-        let sfx_type = config_guard.get(&attacker_kind).map(|cfg| cfg.sfx_type.clone()).unwrap_or_else(|| "".to_string());
-        let sfx_type_short = match sfx_type.as_str() {
-            "inside_story" => "bis",
-            "color_splash" => "cs",
-            "dream_team" => "dt",
-            "superstar_saga" => "ssbm",
-            "brothership" => "bro",
-            _ => sfx_type.as_str(),
-        };
-
+        WorkModule::set_int(owner_boma, settings.combo_frame, FIGHTER_INSTANCE_WORK_ID_INT_COMBO_TIMER);
         let combo_counter = WorkModule::get_int(owner_boma, FIGHTER_INSTANCE_WORK_ID_INT_COMBO_COUNTER);
-        let pos = *PostureModule::pos(attacker_boma);
-        let lr = PostureModule::lr(attacker_boma);
-        let position_vector = Vector3f{ x: pos.x+8.0*lr, y: pos.y+12.0, z: pos.z };
-        let zero_vector = Vector3f{x: 0.0, y: 0.0, z: 0.0};
-        let hits = config_guard.get(&attacker_kind).map(|cfg| cfg.combo_hits.clone()).unwrap_or_else(|| DEFAULT_COMBO_HITS.to_vec());
-        let combo_level = if attacker_kind == *FIGHTER_KIND_SONIC {
-            match combo_counter {
-                x if x >= hits.get(4).cloned().unwrap_or(6) => "amazing",
-                x if x >= hits.get(3).cloned().unwrap_or(5) => "outstanding",
-                x if x >= hits.get(2).cloned().unwrap_or(4) => "awesome",
-                x if x >= hits.get(1).cloned().unwrap_or(3) => "great",
-                x if x >= hits.get(0).cloned().unwrap_or(2) => "good",
-                _ => "",
-            }
-        } else { match combo_counter {
-            x if x >= hits.get(3).cloned().unwrap_or(5) => "excellent",
-            x if x >= hits.get(2).cloned().unwrap_or(4) => "great",
-            x if x >= hits.get(1).cloned().unwrap_or(3) => "good",
-            x if x >= hits.get(0).cloned().unwrap_or(2) => "ok",
-            _ => "",
-        }};
-
-        let final_sfx_str = if attacker_kind == *FIGHTER_KIND_SONIC {
-            match combo_level {
-                "good" => "se_combo_cs_ok",
-                "great" => "se_combo_cs_good",
-                "awesome" => "se_combo_cs_great",
-                "outstanding" => "se_combo_cs_excellent",
-                "amazing" => "se_combo_bro_ok",
-                _ => "",
-            }.to_string()
-        } else { format!("se_combo_{}_{}", sfx_type_short, combo_level) };
-        let final_vfx_str = format!("sys_combo_{}_{}", vfx_type_short, combo_level);
-        let vfx_size = match sfx_type_short {
-            "bis" => 1.3,
-            "cs" => 1.2,
-            "dt" => 1.18,
-            "ssbm" => 1.2,
-            "sonic_colors" => 1.2,
-            "bro" => 1.5,
-            _ => 1.0,
-        };
-        if combo_counter > hits.get(0).copied().unwrap_or(2) - 1 {
-            SoundModule::play_se(owner_boma, Hash40::new(&final_sfx_str), true, false, false, false, enSEType(0));
-            EffectModule::req(attacker_boma, Hash40::new(&final_vfx_str), &position_vector, &zero_vector, vfx_size, 0, -1, false, 0);
+        if let Some(rank) = settings.rank_for_hits(combo_counter) {
+            let pos = *PostureModule::pos(attacker_boma);
+            let lr = PostureModule::lr(attacker_boma);
+            let position = Vector3f {
+                x: pos.x + settings.offset_x * lr,
+                y: pos.y + settings.offset_y,
+                z: pos.z,
+            };
+            let rotation = Vector3f { x: 0.0, y: 0.0, z: 0.0 };
+            SoundModule::play_se(owner_boma, Hash40::new(&rank.sound), true, false, false, false, enSEType(0));
+            EffectModule::req(attacker_boma, Hash40::new(&rank.effect), &position, &rotation, rank.scale, 0, -1, false, 0);
         }
     }
 
@@ -316,27 +236,24 @@ static OFFSET_SEARCH_CODE: &[u8] = &[
 ];
 
 pub fn install() {
-    let mut found_config: Option<HashMap<String, CharacterData>> = None;
-    for entry in std::fs::read_dir("sd:/ultimate/mods").unwrap() {
-        if let Ok(entry) = entry {
-            let mut path = entry.path();
-            if path.is_dir() {
-                path.push("combo_fx.toml");
-
-                if path.exists() {
-                    found_config = Some(load_effect_config(path.to_str().unwrap()));
+    let mut config = HashMap::new();
+    if let Ok(entries) = std::fs::read_dir("sd:/ultimate/mods") {
+        let mut paths: Vec<_> = entries.filter_map(Result::ok)
+            .map(|entry| entry.path().join("sonic_combo_fx.toml"))
+            .filter(|path| path.is_file()).collect();
+        paths.sort();
+        for path in paths {
+            if let Some(path) = path.to_str() {
+                for (name, settings) in load_effect_config(path) {
+                    let kind = get_fighter_kind_from_string(&name);
+                    if kind != *FIGHTER_KIND_NONE {
+                        config.insert(kind, settings);
+                    }
                 }
             }
         }
     }
-
-    let mut global_map = EFFECT_CONFIG.write().expect("Lock failed on EFFECT_CONFIG");
-    if let Some(config_map) = found_config {
-        *global_map = config_map
-            .into_iter()
-            .map(|(name, data)| (get_fighter_kind_from_string(&name), data))
-            .collect();
-    }
+    *EFFECT_CONFIG.write().expect("Failed to write config") = config;
 
     unsafe {
         let text_ptr = getRegionAddress(Region::Text) as *const u8;

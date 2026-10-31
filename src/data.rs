@@ -1,71 +1,73 @@
-use super::*;
-use std::{collections::HashMap, fs, path::Path};
+use std::{collections::HashMap, fs};
 use serde::Deserialize;
-use toml;
 
-#[derive(Debug, Deserialize)]
-struct CharacterConfig {
-    vfx_type: Option<String>,
-    sfx_type: Option<String>,
-    combo_frame: Option<i32>,
-    cooldown_frame: Option<i32>,
-    combo_hits: Option<Vec<i32>>,
+fn combo_frame() -> i32 { 90 }
+fn cooldown_frame() -> i32 { 16 }
+fn offset_x() -> f32 { 8.0 }
+fn offset_y() -> f32 { 12.0 }
+fn effect_scale() -> f32 { 1.2 }
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ComboRank {
+    pub hits: i32,
+    pub sound: String,
+    pub effect: String,
+    #[serde(default = "effect_scale")]
+    pub scale: f32,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct CharacterData {
-    pub vfx_type: String,
-    pub sfx_type: String,
+    #[serde(default = "combo_frame")]
     pub combo_frame: i32,
+    #[serde(default = "cooldown_frame")]
     pub cooldown_frame: i32,
-    pub combo_hits: Vec<i32>,
+    #[serde(default = "offset_x")]
+    pub offset_x: f32,
+    #[serde(default = "offset_y")]
+    pub offset_y: f32,
+    pub ranks: Vec<ComboRank>,
 }
 
-pub fn load_effect_config(config_path: &str) -> HashMap<String, CharacterData> {
-    let mut character_map: HashMap<String, CharacterData> = HashMap::new();
+impl CharacterData {
+    pub fn rank_for_hits(&self, hits: i32) -> Option<&ComboRank> {
+        self.ranks.iter().rev().find(|rank| hits >= rank.hits)
+    }
+}
 
-    let content = match fs::read_to_string(config_path) {
-        Ok(data) => data,
-        Err(_) => {
-            println!("[combo_fx] Failed to read file at {}", config_path);
-            return character_map;
+pub fn parse_effect_config(content: &str) -> Result<HashMap<String, CharacterData>, String> {
+    let raw: HashMap<String, Vec<CharacterData>> = toml::from_str(content)
+        .map_err(|error| format!("Invalid combo config: {}", error))?;
+    let mut config = HashMap::new();
+    for (name, mut entries) in raw {
+        if entries.len() != 1 {
+            return Err(format!("Expected one config for {}", name));
         }
-    };
-
-    let raw: toml::Value = match toml::from_str(&content) {
-        Ok(v) => v,
-        Err(e) => {
-            println!("[combo_fx] Failed to parse TOML: {}", e);
-            return character_map;
+        let entry = entries.remove(0);
+        if entry.combo_frame <= 0 || entry.cooldown_frame < 0 || entry.ranks.is_empty()
+            || !entry.offset_x.is_finite() || !entry.offset_y.is_finite() {
+            return Err(format!("Invalid combo settings for {}", name));
         }
-    };
-
-    if let toml::Value::Table(table) = raw {
-        for (character_name, value) in table {
-            if let toml::Value::Array(entries) = value {
-                for entry in entries {
-                    if let Ok(parsed) = entry.clone().try_into::<CharacterConfig>() {
-                        let vfx_type = parsed.vfx_type.unwrap_or_default();
-                        let sfx_type = parsed.sfx_type.unwrap_or_default();
-                        if vfx_type.is_empty() && sfx_type.is_empty() {
-                            continue;
-                        }
-
-                        let data = CharacterData {
-                            vfx_type,
-                            sfx_type,
-                            combo_frame: parsed.combo_frame.unwrap_or(DEFAULT_COMBO_FRAME),
-                            cooldown_frame: parsed.cooldown_frame.unwrap_or(DEFAULT_COOLDOWN_FRAME),
-                            combo_hits: parsed.combo_hits.unwrap_or_else(|| DEFAULT_COMBO_HITS.to_vec()),
-                        };
-
-                        character_map.insert(character_name.clone(), data);
-                    }
-                }
+        let mut previous_hits = 0;
+        for rank in &entry.ranks {
+            if rank.hits <= previous_hits || rank.sound.is_empty() || rank.effect.is_empty()
+                || !rank.scale.is_finite() || rank.scale <= 0.0 {
+                return Err(format!("Invalid rank settings for {}", name));
             }
+            previous_hits = rank.hits;
+        }
+        config.insert(name, entry);
+    }
+    Ok(config)
+}
+
+pub fn load_effect_config(path: &str) -> HashMap<String, CharacterData> {
+    match fs::read_to_string(path).map_err(|error| error.to_string())
+        .and_then(|content| parse_effect_config(&content)) {
+        Ok(config) => config,
+        Err(error) => {
+            println!("[sonic_combo_fx] {}", error);
+            HashMap::new()
         }
     }
-
-    println!("[combo_fx] Loaded effect configuration for {} character(s)", character_map.len());
-    character_map
 }
