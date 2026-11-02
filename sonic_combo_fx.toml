@@ -7,29 +7,29 @@ offset_y = 12.0
 [[sonic.ranks]]
 hits = 2
 sound = "se_combo_cs_ok"
-effect = "sys_combo_sonic_colors_good"
+effect = "sonic_combo_sonic_colors_good"
 scale = 1.2
 
 [[sonic.ranks]]
 hits = 3
 sound = "se_combo_cs_good"
-effect = "sys_combo_sonic_colors_great"
+effect = "sonic_combo_sonic_colors_great"
 scale = 1.2
 
 [[sonic.ranks]]
 hits = 4
 sound = "se_combo_cs_great"
-effect = "sys_combo_sonic_colors_awesome"
+effect = "sonic_combo_sonic_colors_awesome"
 scale = 1.2
 
 [[sonic.ranks]]
 hits = 5
 sound = "se_combo_cs_excellent"
-effect = "sys_combo_sonic_colors_outstanding"
+effect = "sonic_combo_sonic_colors_outstanding"
 scale = 1.2
 
 [[sonic.ranks]]
 hits = 6
 sound = "se_combo_bro_ok"
-effect = "sys_combo_sonic_colors_amazing"
+effect = "sonic_combo_sonic_colors_amazing"
 scale = 1.2

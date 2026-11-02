@@ -6,3 +6,12 @@
 *.rvz
 *.zip
 .env
+
+*.bak
+*.log
+*.pdb
+*.exe
+*.eff
+*.nus3audio
+*.nus3bank
+*.nutexb
