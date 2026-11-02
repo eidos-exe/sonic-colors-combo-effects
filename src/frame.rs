@@ -4,6 +4,15 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use crate::data::*;
 
+use std::io::Write;
+use std::sync::atomic::{AtomicUsize,Ordering};
+static TRACE_COUNT:AtomicUsize=AtomicUsize::new(0);
+fn trace(message:&str) {
+    if TRACE_COUNT.fetch_add(1,Ordering::Relaxed)>=12 {return;}
+    if let Ok(mut f)=std::fs::OpenOptions::new().create(true).append(true).open("sd:/ultimate/arcropolis/logs/sonic_combo_runtime.log") {let _=writeln!(f,"{}",message);}
+}
+static FRAME_SEEN:AtomicUsize=AtomicUsize::new(0);
+static HIT_SEEN:AtomicUsize=AtomicUsize::new(0);
 lazy_static! {
     pub static ref EFFECT_CONFIG: RwLock<HashMap<i32, CharacterData>> = RwLock::new(HashMap::new());
 }
@@ -19,7 +28,8 @@ const FIGHTER_INSTANCE_WORK_ID_FLAG_COMBO_EFFECT_SPAWNED : i32 = 0x20000116;
 const FIGHTER_INSTANCE_WORK_ID_INT_COMBO_TIMER : i32 = 0x1000010B;
 const FIGHTER_INSTANCE_WORK_ID_INT_COMBO_COUNTER : i32 = 0x1000010C;
 
-unsafe extern "C" fn combo_fighter_frame(fighter: &mut L2CFighterCommon) {
+unsafe extern "C" fn sonic_combo_fighter_frame(fighter: &mut L2CFighterCommon) {
+    if FRAME_SEEN.fetch_add(1,Ordering::Relaxed)==0 {trace("fighter callback active");}
     let boma = fighter.module_accessor;
     let kind = utility::get_kind(&mut *boma);
     let settings = match EFFECT_CONFIG.read().expect("Failed to read config").get(&kind) {
@@ -64,7 +74,7 @@ unsafe extern "C" fn combo_fighter_frame(fighter: &mut L2CFighterCommon) {
 static mut NOTIFY_LOG_EVENT_COLLISION_HIT_OFFSET : usize = 0x67a7b0;
 
 #[skyline::hook(offset = NOTIFY_LOG_EVENT_COLLISION_HIT_OFFSET)]
-pub unsafe fn notify_log_event_collision_hit_replace(fighter_manager: *mut smash::app::FighterManager, attacker_id: u32, defender_id: u32, damage: f32, attack_kind: i32, damage_meteor: bool) -> u64 {
+pub unsafe fn sonic_combo_collision_hit(fighter_manager: *mut smash::app::FighterManager, attacker_id: u32, defender_id: u32, damage: f32, attack_kind: i32, damage_meteor: bool) -> u64 {
     let og = original!()(fighter_manager, attacker_id, defender_id, damage, attack_kind, damage_meteor);
     let attacker_boma = sv_battle_object::module_accessor(attacker_id);
     let defender_boma = sv_battle_object::module_accessor(defender_id);
@@ -101,6 +111,7 @@ pub unsafe fn notify_log_event_collision_hit_replace(fighter_manager: *mut smash
         None => return og,
     };
 
+    if HIT_SEEN.fetch_add(1,Ordering::Relaxed)==0 {trace("own hit callback active");}
     // Clear counter when getting hit
     WorkModule::set_int(defender_boma, 0, FIGHTER_INSTANCE_WORK_ID_INT_COMBO_COUNTER);
     WorkModule::set_int(defender_boma, 0, FIGHTER_INSTANCE_WORK_ID_INT_COMBO_TIMER);
@@ -124,7 +135,8 @@ pub unsafe fn notify_log_event_collision_hit_replace(fighter_manager: *mut smash
             };
             let rotation = Vector3f { x: 0.0, y: 0.0, z: 0.0 };
             SoundModule::play_se(owner_boma, Hash40::new(&rank.sound), true, false, false, false, enSEType(0));
-            EffectModule::req(owner_boma, Hash40::new(&rank.effect), &position, &rotation, rank.scale, 0, -1, false, 0);
+            let handle=EffectModule::req(owner_boma, Hash40::new(&rank.effect), &position, &rotation, rank.scale, 0, -1, false, 0);
+            trace(&format!("rank={} hits={} effect_handle={}",rank.effect,combo_counter,handle));
         }
     }
 
@@ -149,23 +161,12 @@ static OFFSET_SEARCH_CODE: &[u8] = &[
 ];
 
 pub fn install() {
-    let mut config = HashMap::new();
-    if let Ok(entries) = std::fs::read_dir("sd:/ultimate/mods") {
-        let mut paths: Vec<_> = entries.filter_map(Result::ok)
-            .map(|entry| entry.path().join("sonic_combo_fx.toml"))
-            .filter(|path| path.is_file()).collect();
-        paths.sort();
-        for path in paths {
-            if let Some(path) = path.to_str() {
-                for (name, settings) in load_effect_config(path) {
-                    let kind = get_fighter_kind_from_string(&name);
-                    if kind != *FIGHTER_KIND_NONE {
-                        config.insert(kind, settings);
-                    }
-                }
-            }
-        }
-    }
+    let (loaded,path)=crate::config_loading::load(std::path::Path::new("sd:/ultimate/mods"),"sonic_combo_fx.toml",include_str!("../sonic_combo_fx.toml"));
+    let config: HashMap<i32,CharacterData> = loaded.into_iter().filter_map(|(name,settings)| {
+        let kind=get_fighter_kind_from_string(&name);
+        if kind==*FIGHTER_KIND_NONE {None} else {Some((kind,settings))}
+    }).collect();
+    trace(&format!("started; config={}; fighters={}",path,config.len()));
     *EFFECT_CONFIG.write().expect("Failed to write config") = config;
 
     unsafe {
@@ -178,9 +179,9 @@ pub fn install() {
     }
 
     skyline::install_hook!(
-        notify_log_event_collision_hit_replace
+        sonic_combo_collision_hit
     );
-    Agent::new("fighter")
-        .on_line(Main, combo_fighter_frame)
+    Agent::new("sonic")
+        .on_line(Main, sonic_combo_fighter_frame)
         .install();
 }

@@ -27,6 +27,7 @@ use {
 
 mod frame;
 mod data;
+mod config_loading;
 
 #[skyline::main(name = "sonic_colors_combo_effects")]
 pub fn main() {
