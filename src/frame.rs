@@ -28,7 +28,7 @@ unsafe fn observe_attack(boma:*mut BattleObjectModuleAccessor,slot:usize) {
  let family=MOVE_FAMILIES.iter().find(|(hash,_)|*hash==motion).map(|(_,family)|*family).or_else(||FIGHTER_MOVE_FAMILIES.iter().find(|(kind,_)|*kind==status).map(|(_,family)|*family)).unwrap_or_else(|| {
   if status==*FIGHTER_STATUS_KIND_SPECIAL_N {1}else if status==*FIGHTER_STATUS_KIND_SPECIAL_S {2}else if status==*FIGHTER_STATUS_KIND_SPECIAL_HI {3}else if status==*FIGHTER_STATUS_KIND_SPECIAL_LW {4}else{0}
  });
- let mut all=GROUPS.lock().unwrap();all[slot].observe((*boma).battle_object_id,boma as usize,family,status,motion,MotionModule::frame(boma));
+ let mut all=GROUPS.lock().unwrap();all[slot].observe_move((*boma).battle_object_id,boma as usize,family,status,motion,MotionModule::frame(boma),status==*FIGHTER_STATUS_KIND_ATTACK_AIR);
  if ItemModule::is_have_item(boma,0) {let id=ItemModule::get_have_item_id(boma,0);if id<=u32::MAX as u64 {all[slot].held(id as u32);}}
 }
 unsafe fn group_contact(owner:*mut BattleObjectModuleAccessor,source:*mut BattleObjectModuleAccessor)->bool {
