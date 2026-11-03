@@ -28,6 +28,11 @@ use {
 mod frame;
 mod data;
 mod config_loading;
+mod hit_owner;
+mod combo_state;
+mod attack_group;
+mod throw_credit;
+mod pummel;
 
 #[skyline::main(name = "sonic_colors_combo_effects")]
 pub fn main() {
